@@ -5,9 +5,9 @@ Analyze Netflix Content Similarity and Genre Distribution
 Features:
 - Cluster Netflix movies/TV shows by description similarity
 - Summarize genres per cluster and overall
-- Plot top genres bar chart (only if --genre is not provided)
+- Plot top genres bar chart (always generated for UI, only shown in Matplotlib if --no-show is not set)
 - Retrieve all movies/shows by a specific genre (sorted by rating)
-- Interactive UI window for browsing genre titles (unless --no-ui or --no-show)
+- Modern PyQt6-based interactive UI: genre picker, title viewer, navigation, action buttons (unless --no-ui)
 - Writes all available genres (for --genre option) to available_genres.txt
 
 CLI options:
@@ -15,15 +15,15 @@ CLI options:
     --clusters N       Number of clusters for KMeans (default: 20)
     --top-genres M     Number of genres to plot (default: 20)
     --genre GENRE      Filter and list all titles in the specified genre (case-insensitive).
-                       If set, skips genre bar chart and shows interactive UI unless --no-ui.
-    --no-ui            Suppress interactive title browser UI (for --genre); just print results.
-    --no-show          Do not show plot or UI (headless)
+                       If set, skips cluster summary/table/auto-CSV, but enables GUI.
+    --no-ui            Suppress PyQt6 GUI; just print results.
+    --no-show          Suppress Matplotlib pop-up windows (does not affect GUI)
 
 Outputs:
-    - netflix_clusters.csv: Data with cluster labels (not produced if --genre is set)
+    - netflix_clusters.csv: Data with cluster labels (auto if no --genre or no UI; else only by UI button)
     - Cluster summary printed to console (not shown if --genre is set)
-    - netflix_top_genres.png: Bar chart of top genres (not produced if --genre is set)
-    - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
+    - netflix_top_genres.png: Bar chart of top genres (always generated for UI)
+    - titles_in_<genre>.csv: (only if --genre is specified and saved via UI or auto if --no-ui)
     - available_genres.txt: All unique valid genres, one per line (auto-generated)
 
 Examples:
@@ -176,6 +176,7 @@ def main():
     print(f"Wrote {len(unique_genres)} available genres to available_genres.txt")
 
     # 2b. If --genre: filter and output
+    filtered = None
     if args.genre:
         print(f"\nFiltering titles for genre: '{args.genre}'")
         filtered, genre_list = filter_titles_by_genre(df_exploded, args.genre)
@@ -188,25 +189,20 @@ def main():
             try:
                 filtered['rating_numeric'] = pd.to_numeric(filtered['rating'], errors='coerce')
                 if filtered['rating_numeric'].notna().any():
-                    # Sort numeric descending, NaN last
                     filtered = filtered.sort_values(by=['rating_numeric','rating'], ascending=[False, True])
                 else:
                     filtered = filtered.sort_values(by=['rating'], ascending=True)
                 filtered = filtered.drop(columns=['rating_numeric'])
-            except Exception:  # fallback
+            except Exception:
                 filtered = filtered.sort_values(by=['rating'], ascending=True)
-        # Print results with row numbers
         print(f"\nFound {len(filtered)} titles in genre '{args.genre}':")
         print(filtered.reset_index(drop=True).to_string(index=True))
-        # Save to CSV
-        genre_fname = args.genre.strip().replace(" ", "_").lower()
-        out_path = f"titles_in_{genre_fname}.csv"
-        filtered.to_csv(out_path, index=False)
-        print(f"\nResults saved to {out_path}")
-        # Optionally show UI if not --no-ui and not --no-show
-        if not args.no_ui and not args.no_show:
-            show_titles_ui(filtered, args.genre)
-        # Continue with rest of analysis as usual
+        # Optionally save CSV if no UI
+        if args.no_ui:
+            genre_fname = args.genre.strip().replace(" ", "_").lower()
+            out_path = f"titles_in_{genre_fname}.csv"
+            filtered.to_csv(out_path, index=False)
+            print(f"\nResults saved to {out_path}")
 
     # 3. TF-IDF vectorization
     X, tfidf_vec = vectorize_descriptions(df['description'].fillna(''))
@@ -215,13 +211,11 @@ def main():
     km, labels = perform_clustering(X, args.clusters)
     df['cluster'] = labels
 
-    # 5. Cluster summaries
+    # 5. Cluster summaries, clusters_df
     cluster_infos = []
     for cluster_id in range(args.clusters):
         count = (df['cluster'] == cluster_id).sum()
-        # Titles closest to centroid (by cosine similarity)
         top_titles = cluster_top_titles(X, km, df, cluster_id, top_n=10)
-        # Top genres in cluster
         genres_in_cluster = df[df['cluster'] == cluster_id].explode('listed_in_list')
         top_genres = genres_in_cluster['listed_in_list'].value_counts().head(3).index.tolist()
         cluster_infos.append({
@@ -230,21 +224,21 @@ def main():
             "top_titles": top_titles,
             "top_genres": top_genres,
         })
+    clusters_df = df[['title', 'type', 'description', 'listed_in', 'cluster']]
 
-    # 6. Save CSV (only if --genre not provided)
-    df_out = df[['title', 'type', 'description', 'listed_in', 'cluster']]
-    if args.genre is None:
-        df_out.to_csv("netflix_clusters.csv", index=False)
+    # 6. Save CSV (only if --genre not provided and no UI)
+    if args.genre is None and args.no_ui:
+        clusters_df.to_csv("netflix_clusters.csv", index=False)
         print("Saved clustering results to netflix_clusters.csv")
-    else:
+    elif args.genre is not None and args.no_ui:
         print("Skipping clusters CSV because --genre flag was provided.")
+    # If UI is to be launched, user saves CSV from UI
 
     # 7. Print summary table (only if --genre not provided)
     if args.genre is None:
         try:
             print_cluster_summary(cluster_infos)
         except ImportError:
-            # Fallback if tabulate not installed
             print("\nCluster Summary:")
             print("Cluster | Count | Top Genres")
             for info in cluster_infos:
@@ -252,114 +246,13 @@ def main():
     else:
         print("Skipping cluster summary because --genre flag was provided.")
 
-    # 8. Plot genre distribution (only if --genre not provided)
-    if args.genre is None:
-        plot_top_genres(df_exploded, args.top_genres, "netflix_top_genres.png", show_plot=not args.no_show)
-    else:
-        print("Skipping top-genre chart because --genre flag was provided.")
+    # 8. Plot genre distribution (always generate image for UI, only show if --no-show is not set and --genre is None)
+    chart_path = "netflix_top_genres.png"
+    plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=(args.genre is None and not args.no_show))
 
-def show_titles_ui(df, genre):
-    """Display an interactive Tkinter UI for browsing titles in a genre DataFrame."""
-    try:
-        import tkinter as tk
-        from tkinter import ttk, messagebox
-    except ImportError:
-        print("Tkinter not available, falling back to console listing.")
-        return
-    try:
-        # Prepare data as a list of dicts
-        df = df.reset_index(drop=True)
-        records = df.to_dict('records')
-        if not records:
-            print("No titles to show in UI.")
-            return
-
-        root = tk.Tk()
-        root.title(f"{genre} Titles")
-        root.geometry("650x400")
-        root.minsize(500, 300)
-
-        idx = {'value': 0}
-        total = len(records)
-
-        font_title = ("Arial", 16, "bold")
-        font_label = ("Arial", 12)
-        font_desc = ("Arial", 11)
-        wraplen = 600
-
-        def get_field(rec, key):
-            return rec.get(key, "") if rec.get(key, "") is not None else ""
-
-        def update_display():
-            rec = records[idx['value']]
-            lbl_title.config(text=get_field(rec, 'title'))
-            lbl_rating.config(text=f"Rating: {get_field(rec, 'rating')}")
-            lbl_year.config(text=f"Year: {get_field(rec, 'release_year')}")
-            lbl_duration.config(text=f"Duration: {get_field(rec, 'duration')}")
-            desc = get_field(rec, 'description')
-            txt_desc.config(state='normal')
-            txt_desc.delete("1.0", tk.END)
-            txt_desc.insert(tk.END, desc)
-            txt_desc.config(state='disabled')
-            lbl_idx.config(text=f"{idx['value'] + 1} / {total}")
-
-        def prev():
-            if idx['value'] > 0:
-                idx['value'] -= 1
-                update_display()
-
-        def next_():
-            if idx['value'] < total - 1:
-                idx['value'] += 1
-                update_display()
-
-        # Title
-        lbl_title = tk.Label(root, text="", font=font_title, wraplength=wraplen, justify='center')
-        lbl_title.pack(pady=(18,8))
-
-        # Info row
-        frame_info = tk.Frame(root)
-        frame_info.pack()
-        lbl_rating = tk.Label(frame_info, text="", font=font_label)
-        lbl_rating.grid(row=0, column=0, padx=6)
-        lbl_year = tk.Label(frame_info, text="", font=font_label)
-        lbl_year.grid(row=0, column=1, padx=6)
-        lbl_duration = tk.Label(frame_info, text="", font=font_label)
-        lbl_duration.grid(row=0, column=2, padx=6)
-
-        # Description
-        txt_desc = tk.Text(root, font=font_desc, wrap='word', height=7, width=70)
-        txt_desc.pack(pady=(12,6))
-        txt_desc.config(state='disabled', bg=root.cget('bg'), relief='flat')
-
-        # Index label
-        lbl_idx = tk.Label(root, text="", font=font_label)
-        lbl_idx.pack()
-
-        # Button row
-        frame_btns = tk.Frame(root)
-        frame_btns.pack(pady=12)
-        btn_prev = ttk.Button(frame_btns, text="Prev", command=prev)
-        btn_prev.grid(row=0, column=0, padx=12)
-        btn_next = ttk.Button(frame_btns, text="Next", command=next_)
-        btn_next.grid(row=0, column=1, padx=12)
-
-        def on_key(e):
-            if e.keysym in ("Left", "KP_Left"):
-                prev()
-            elif e.keysym in ("Right", "KP_Right"):
-                next_()
-
-        root.bind('<Left>', on_key)
-        root.bind('<Right>', on_key)
-        root.protocol("WM_DELETE_WINDOW", lambda: root.destroy() or sys.exit(0))
-
-        update_display()
-        root.mainloop()
-    except Exception as e:
-        print("UI could not be started. Falling back to console listing.")
-        print(f"Reason: {e}")
-        return
+    # 9. If UI is desired, launch PyQt6 UI
+    if args.genre and not args.no_ui:
+        launch_pyqt_ui(df_exploded, clusters_df, available_genres, chart_path, initial_genre=args.genre)
 
 if __name__ == "__main__":
     main()
