@@ -5,7 +5,7 @@ Analyze Netflix Content Similarity and Genre Distribution
 Features:
 - Cluster Netflix movies/TV shows by description similarity
 - Summarize genres per cluster and overall
-- Plot top genres bar chart
+- Plot top genres bar chart (only if --genre is not provided)
 - Retrieve all movies/shows by a specific genre (sorted by rating)
 - Writes all available genres (for --genre option) to available_genres.txt
 
@@ -13,13 +13,14 @@ CLI options:
     --csv PATH         Path to input CSV (default: data.csv)
     --clusters N       Number of clusters for KMeans (default: 20)
     --top-genres M     Number of genres to plot (default: 20)
-    --genre GENRE      Filter and list all titles in the specified genre (case-insensitive)
+    --genre GENRE      Filter and list all titles in the specified genre (case-insensitive).
+                       If set, skips genre bar chart.
     --no-show          Do not show plot (headless)
 
 Outputs:
     - netflix_clusters.csv: Data with cluster labels
     - Cluster summary printed to console
-    - netflix_top_genres.png: Bar chart of top genres
+    - netflix_top_genres.png: Bar chart of top genres (not produced if --genre is set)
     - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
     - available_genres.txt: All unique valid genres, one per line (auto-generated)
 
@@ -237,8 +238,11 @@ def main():
         for info in cluster_infos:
             print(f"{info['cluster']:7} | {info['count']:5} | {', '.join(info['top_genres'])}")
 
-    # 8. Plot genre distribution
-    plot_top_genres(df_exploded, args.top_genres, "netflix_top_genres.png", show_plot=not args.no_show)
+    # 8. Plot genre distribution (only if --genre not provided)
+    if args.genre is None:
+        plot_top_genres(df_exploded, args.top_genres, "netflix_top_genres.png", show_plot=not args.no_show)
+    else:
+        print("Skipping top-genre chart because --genre flag was provided.")
 
 if __name__ == "__main__":
     main()
