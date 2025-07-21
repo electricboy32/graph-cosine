@@ -137,67 +137,6 @@ def write_available_genres(genres, path="available_genres.txt"):
         for g in genres:
             f.write(f"{g}\n")
 
-def main():
-    pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
-    parser = argparse.ArgumentParser(
-        description="Netflix clustering and genre dashboard. See --help for options."
-    )
-    parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
-    parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
-    parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot [default: 20]")
-    parser.add_argument("--no-ui", action="store_true", help="Suppress PyQt6 dashboard UI; just run analysis and exit")
-    args = parser.parse_args()
-
-    # 1. Load CSV
-    if not os.path.exists(args.csv):
-        print(f"CSV file '{args.csv}' not found.", file=sys.stderr)
-        sys.exit(1)
-    df = pd.read_csv(args.csv)
-    required_cols = ['title', 'type', 'description', 'listed_in']
-    validate_columns(df, required_cols)
-
-    # 2. Preprocess genres & descriptions
-    df['listed_in_list'] = preprocess_listed_in(df['listed_in'])
-    df_exploded = df.explode('listed_in_list').rename(columns={'listed_in_list': 'listed_in_exploded'})
-
-    # 3. Available genres (not auto-saved)
-    available_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
-
-    # 4. TF-IDF vectorization & clustering
-    X, tfidf_vec = vectorize_descriptions(df['description'].fillna(''))
-    km, labels = perform_clustering(X, args.clusters)
-    df['cluster'] = labels
-
-    # 5. Cluster summaries, clusters_df
-    cluster_infos = []
-    for cluster_id in range(args.clusters):
-        count = (df['cluster'] == cluster_id).sum()
-        top_titles = cluster_top_titles(X, km, df, cluster_id, top_n=10)
-        genres_in_cluster = df[df['cluster'] == cluster_id].explode('listed_in_list')
-        top_genres = genres_in_cluster['listed_in_list'].value_counts().head(3).index.tolist()
-        cluster_infos.append({
-            "cluster": cluster_id,
-            "count": count,
-            "top_titles": top_titles,
-            "top_genres": top_genres,
-        })
-    clusters_df = df[['title', 'type', 'description', 'listed_in', 'cluster']]
-
-    # 6. Always generate chart PNG (no popup)
-    chart_path = "netflix_top_genres.png"
-    plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=False)
-
-    # 7. Launch Dashboard UI unless --no-ui
-    if not args.no_ui:
-        launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path)
-    else:
-        print("Analysis complete. Dashboard UI not shown (--no-ui).")
-
-
-if __name__ == "__main__":
-    main()
-
-
 def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path):
     """
     PyQt6 Dashboard for Netflix clustering/genre analysis.
@@ -422,6 +361,67 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
     mw = MainDashboardWindow(df_exploded, clusters_df, available_genres, chart_path)
     mw.show()
     app.exec()
+
+
+def main():
+    pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
+    parser = argparse.ArgumentParser(
+        description="Netflix clustering and genre dashboard. See --help for options."
+    )
+    parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
+    parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
+    parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot (default: 20)")
+    parser.add_argument("--no-ui", action="store_true", help="Suppress PyQt6 dashboard UI; just run analysis and exit")
+    args = parser.parse_args()
+
+    # 1. Load CSV
+    if not os.path.exists(args.csv):
+        print(f"CSV file '{args.csv}' not found.", file=sys.stderr)
+        sys.exit(1)
+    df = pd.read_csv(args.csv)
+    required_cols = ['title', 'type', 'description', 'listed_in']
+    validate_columns(df, required_cols)
+
+    # 2. Preprocess genres & descriptions
+    df['listed_in_list'] = preprocess_listed_in(df['listed_in'])
+    df_exploded = df.explode('listed_in_list').rename(columns={'listed_in_list': 'listed_in_exploded'})
+
+    # 3. Available genres (not auto-saved)
+    available_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
+
+    # 4. TF-IDF vectorization & clustering
+    X, tfidf_vec = vectorize_descriptions(df['description'].fillna(''))
+    km, labels = perform_clustering(X, args.clusters)
+    df['cluster'] = labels
+
+    # 5. Cluster summaries, clusters_df
+    cluster_infos = []
+    for cluster_id in range(args.clusters):
+        count = (df['cluster'] == cluster_id).sum()
+        top_titles = cluster_top_titles(X, km, df, cluster_id, top_n=10)
+        genres_in_cluster = df[df['cluster'] == cluster_id].explode('listed_in_list')
+        top_genres = genres_in_cluster['listed_in_list'].value_counts().head(3).index.tolist()
+        cluster_infos.append({
+            "cluster": cluster_id,
+            "count": count,
+            "top_titles": top_titles,
+            "top_genres": top_genres,
+        })
+    clusters_df = df[['title', 'type', 'description', 'listed_in', 'cluster']]
+
+    # 6. Always generate chart PNG (no popup)
+    chart_path = "netflix_top_genres.png"
+    plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=False)
+
+    # 7. Launch Dashboard UI unless --no-ui
+    if not args.no_ui:
+        launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path)
+    else:
+        print("Analysis complete. Dashboard UI not shown (--no-ui).")
+
+
+if __name__ == "__main__":
+    main()
 
 
 def launch_pyqt_ui(df_exploded, clusters_df, available_genres, chart_path, initial_genre=None):
