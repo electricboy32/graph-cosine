@@ -7,6 +7,7 @@ Features:
 - Summarize genres per cluster and overall
 - Plot top genres bar chart
 - Retrieve all movies/shows by a specific genre (sorted by rating)
+- Writes all available genres (for --genre option) to available_genres.txt
 
 CLI options:
     --csv PATH         Path to input CSV (default: data.csv)
@@ -20,6 +21,7 @@ Outputs:
     - Cluster summary printed to console
     - netflix_top_genres.png: Bar chart of top genres
     - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
+    - available_genres.txt: All unique valid genres, one per line (auto-generated)
 
 Examples:
     python analyze_netflix_similarity_and_genres.py --genre "Dramas"
@@ -133,10 +135,17 @@ def filter_titles_by_genre(df_exploded, genre):
     filtered_out = filtered.drop_duplicates(subset=['title'])[available_cols].copy()
     return filtered_out, None
 
+def write_available_genres(genres, path="available_genres.txt"):
+    """Write unique genres to a text file, one per line."""
+    with open(path, "w", encoding="utf-8") as f:
+        for g in genres:
+            f.write(f"{g}\n")
+
 def main():
     pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
     parser = argparse.ArgumentParser(
-        description="Analyze Netflix similarity, genres, and list titles by genre")
+        description="Analyze Netflix similarity, genres, and list titles by genre. Writes available genres to available_genres.txt automatically."
+    )
     parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
     parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
     parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot [default: 20]")
@@ -155,6 +164,11 @@ def main():
     # 2. Preprocess genres & descriptions
     df['listed_in_list'] = preprocess_listed_in(df['listed_in'])
     df_exploded = df.explode('listed_in_list').rename(columns={'listed_in_list': 'listed_in_exploded'})
+
+    # 2a. Write available genres file
+    unique_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
+    write_available_genres(unique_genres, "available_genres.txt")
+    print(f"Wrote {len(unique_genres)} available genres to available_genres.txt")
 
     # 2b. If --genre: filter and output
     if args.genre:
