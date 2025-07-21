@@ -7,6 +7,7 @@ Features:
 - Summarize genres per cluster and overall
 - Plot top genres bar chart (only if --genre is not provided)
 - Retrieve all movies/shows by a specific genre (sorted by rating)
+- Interactive UI window for browsing genre titles (unless --no-ui or --no-show)
 - Writes all available genres (for --genre option) to available_genres.txt
 
 CLI options:
@@ -14,8 +15,9 @@ CLI options:
     --clusters N       Number of clusters for KMeans (default: 20)
     --top-genres M     Number of genres to plot (default: 20)
     --genre GENRE      Filter and list all titles in the specified genre (case-insensitive).
-                       If set, skips genre bar chart.
-    --no-show          Do not show plot (headless)
+                       If set, skips genre bar chart and shows interactive UI unless --no-ui.
+    --no-ui            Suppress interactive title browser UI (for --genre); just print results.
+    --no-show          Do not show plot or UI (headless)
 
 Outputs:
     - netflix_clusters.csv: Data with cluster labels (not produced if --genre is set)
@@ -26,6 +28,7 @@ Outputs:
 
 Examples:
     python analyze_netflix_similarity_and_genres.py --genre "Dramas"
+    python analyze_netflix_similarity_and_genres.py --genre "Comedies" --no-ui
 """
 
 import sys
@@ -145,13 +148,14 @@ def write_available_genres(genres, path="available_genres.txt"):
 def main():
     pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
     parser = argparse.ArgumentParser(
-        description="Analyze Netflix similarity, genres, and list titles by genre. Writes available genres to available_genres.txt automatically."
+        description="Analyze Netflix similarity, genres, and list titles by genre. Writes available genres to available_genres.txt automatically. If --genre is set, opens interactive UI browser for titles unless --no-ui or --no-show."
     )
     parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
     parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
     parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot [default: 20]")
-    parser.add_argument("--genre", type=str, default=None, help="Specify a genre to list all titles in that genre (case-insensitive)")
-    parser.add_argument("--no-show", action="store_true", help="Suppress plot display")
+    parser.add_argument("--genre", type=str, default=None, help="Specify a genre to list all titles in that genre (case-insensitive). Shows interactive UI unless --no-ui.")
+    parser.add_argument("--no-ui", action="store_true", help="Suppress interactive UI for --genre (just print table)")
+    parser.add_argument("--no-show", action="store_true", help="Suppress plot display and UI (headless)")
     args = parser.parse_args()
 
     # 1. Load CSV
@@ -199,6 +203,9 @@ def main():
         out_path = f"titles_in_{genre_fname}.csv"
         filtered.to_csv(out_path, index=False)
         print(f"\nResults saved to {out_path}")
+        # Optionally show UI if not --no-ui and not --no-show
+        if not args.no_ui and not args.no_show:
+            show_titles_ui(filtered, args.genre)
         # Continue with rest of analysis as usual
 
     # 3. TF-IDF vectorization
@@ -250,6 +257,109 @@ def main():
         plot_top_genres(df_exploded, args.top_genres, "netflix_top_genres.png", show_plot=not args.no_show)
     else:
         print("Skipping top-genre chart because --genre flag was provided.")
+
+def show_titles_ui(df, genre):
+    """Display an interactive Tkinter UI for browsing titles in a genre DataFrame."""
+    try:
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+    except ImportError:
+        print("Tkinter not available, falling back to console listing.")
+        return
+    try:
+        # Prepare data as a list of dicts
+        df = df.reset_index(drop=True)
+        records = df.to_dict('records')
+        if not records:
+            print("No titles to show in UI.")
+            return
+
+        root = tk.Tk()
+        root.title(f"{genre} Titles")
+        root.geometry("650x400")
+        root.minsize(500, 300)
+
+        idx = {'value': 0}
+        total = len(records)
+
+        font_title = ("Arial", 16, "bold")
+        font_label = ("Arial", 12)
+        font_desc = ("Arial", 11)
+        wraplen = 600
+
+        def get_field(rec, key):
+            return rec.get(key, "") if rec.get(key, "") is not None else ""
+
+        def update_display():
+            rec = records[idx['value']]
+            lbl_title.config(text=get_field(rec, 'title'))
+            lbl_rating.config(text=f"Rating: {get_field(rec, 'rating')}")
+            lbl_year.config(text=f"Year: {get_field(rec, 'release_year')}")
+            lbl_duration.config(text=f"Duration: {get_field(rec, 'duration')}")
+            desc = get_field(rec, 'description')
+            txt_desc.config(state='normal')
+            txt_desc.delete("1.0", tk.END)
+            txt_desc.insert(tk.END, desc)
+            txt_desc.config(state='disabled')
+            lbl_idx.config(text=f"{idx['value'] + 1} / {total}")
+
+        def prev():
+            if idx['value'] > 0:
+                idx['value'] -= 1
+                update_display()
+
+        def next_():
+            if idx['value'] < total - 1:
+                idx['value'] += 1
+                update_display()
+
+        # Title
+        lbl_title = tk.Label(root, text="", font=font_title, wraplength=wraplen, justify='center')
+        lbl_title.pack(pady=(18,8))
+
+        # Info row
+        frame_info = tk.Frame(root)
+        frame_info.pack()
+        lbl_rating = tk.Label(frame_info, text="", font=font_label)
+        lbl_rating.grid(row=0, column=0, padx=6)
+        lbl_year = tk.Label(frame_info, text="", font=font_label)
+        lbl_year.grid(row=0, column=1, padx=6)
+        lbl_duration = tk.Label(frame_info, text="", font=font_label)
+        lbl_duration.grid(row=0, column=2, padx=6)
+
+        # Description
+        txt_desc = tk.Text(root, font=font_desc, wrap='word', height=7, width=70)
+        txt_desc.pack(pady=(12,6))
+        txt_desc.config(state='disabled', bg=root.cget('bg'), relief='flat')
+
+        # Index label
+        lbl_idx = tk.Label(root, text="", font=font_label)
+        lbl_idx.pack()
+
+        # Button row
+        frame_btns = tk.Frame(root)
+        frame_btns.pack(pady=12)
+        btn_prev = ttk.Button(frame_btns, text="Prev", command=prev)
+        btn_prev.grid(row=0, column=0, padx=12)
+        btn_next = ttk.Button(frame_btns, text="Next", command=next_)
+        btn_next.grid(row=0, column=1, padx=12)
+
+        def on_key(e):
+            if e.keysym in ("Left", "KP_Left"):
+                prev()
+            elif e.keysym in ("Right", "KP_Right"):
+                next_()
+
+        root.bind('<Left>', on_key)
+        root.bind('<Right>', on_key)
+        root.protocol("WM_DELETE_WINDOW", lambda: root.destroy() or sys.exit(0))
+
+        update_display()
+        root.mainloop()
+    except Exception as e:
+        print("UI could not be started. Falling back to console listing.")
+        print(f"Reason: {e}")
+        return
 
 if __name__ == "__main__":
     main()
