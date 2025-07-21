@@ -63,8 +63,8 @@ def perform_clustering(X, n_clusters, random_state=42):
     return km, labels
 
 def cluster_top_titles(X, km, df, cluster_id, top_n=10):
-    # Bring numpy into scope using import_or_die()
-    _, np, *_ = import_or_die()
+    # Find the top_n titles closest to the centroid (cosine similarity)
+    _, np, _, _, _, _, _ = import_or_die()
     from sklearn.metrics import pairwise_distances
     indices = df.index[df['cluster'] == cluster_id].tolist()
     if not indices:
