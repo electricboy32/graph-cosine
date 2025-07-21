@@ -92,7 +92,7 @@ def plot_top_genres(df_exploded, top_m, output_path, show_plot=True):
     _, _, plt, sns, _, _, _ = import_or_die()
     genre_counts = df_exploded['listed_in_exploded'].value_counts().nlargest(top_m)
     plt.figure(figsize=(10, 6))
-    sns.barplot(y=genre_counts.index, x=genre_counts.values, palette="viridis")
+    sns.barplot(y=genre_counts.index, x=genre_counts.values, color="skyblue")
     plt.xlabel("Number of Titles")
     plt.ylabel("Genre")
     plt.title(f"Top {top_m} Genres on Netflix")
@@ -161,6 +161,11 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
     class GenreBrowserWindow(QWidget):
         def __init__(self, df_exploded, available_genres):
             super().__init__()
+            # Fix: import QTextOption for word wrap mode
+            try:
+                from PyQt6.QtGui import QTextOption
+            except ImportError:
+                QTextOption = None
             self.df_exploded = df_exploded
             self.available_genres = available_genres
             self.setWindowTitle("Browse Netflix by Genre")
@@ -182,7 +187,9 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
             self.txt_desc.setReadOnly(True)
             self.txt_desc.setMinimumHeight(100)
             self.txt_desc.setFont(QFont("Arial", 11))
-            self.txt_desc.setWordWrapMode(True)
+            # Fix: set proper word wrap mode
+            if QTextOption is not None:
+                self.txt_desc.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
 
             self.btn_prev = QPushButton("Prev")
             self.btn_next = QPushButton("Next")
@@ -319,7 +326,8 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
             if not os.path.exists(self.chart_path):
                 QMessageBox.warning(self, "Chart Not Found", "Chart image not found.")
                 return
-            dlg = QWidget(self)
+            from PyQt6.QtWidgets import QDialog
+            dlg = QDialog(self)
             dlg.setWindowTitle("Top Genres Chart")
             vbox = QVBoxLayout()
             lbl = QLabel()
@@ -331,14 +339,14 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
             vbox.addWidget(lbl)
             dlg.setLayout(vbox)
             dlg.setMinimumWidth(650)
-            dlg.show()
-            dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-            self.chart_win = dlg
+            dlg.setModal(True)
+            dlg.exec()
 
         def export_data(self):
             dirpath = QFileDialog.getExistingDirectory(self, "Select Directory to Save Data")
             if dirpath:
                 try:
+                    import shutil
                     # Save available_genres.txt
                     genres_path = os.path.join(dirpath, "available_genres.txt")
                     with open(genres_path, "w", encoding="utf-8") as f:
@@ -347,7 +355,10 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
                     # Save clusters CSV
                     clusters_path = os.path.join(dirpath, "netflix_clusters.csv")
                     self.clusters_df.to_csv(clusters_path, index=False)
-                    QMessageBox.information(self, "Exported", f"Exported:\n{genres_path}\n{clusters_path}")
+                    # Save chart PNG
+                    chart_dest = os.path.join(dirpath, os.path.basename(self.chart_path))
+                    shutil.copy2(self.chart_path, chart_dest)
+                    QMessageBox.information(self, "Exported", f"Exported:\n{genres_path}\n{clusters_path}\n{chart_dest}")
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Could not save files: {e}")
 
