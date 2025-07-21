@@ -19,7 +19,7 @@ CLI options:
 
 Outputs:
     - netflix_clusters.csv: Data with cluster labels (not produced if --genre is set)
-    - Cluster summary printed to console
+    - Cluster summary printed to console (not shown if --genre is set)
     - netflix_top_genres.png: Bar chart of top genres (not produced if --genre is set)
     - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
     - available_genres.txt: All unique valid genres, one per line (auto-generated)
@@ -232,15 +232,18 @@ def main():
     else:
         print("Skipping clusters CSV because --genre flag was provided.")
 
-    # 7. Print summary table
-    try:
-        print_cluster_summary(cluster_infos)
-    except ImportError:
-        # Fallback if tabulate not installed
-        print("\nCluster Summary:")
-        print("Cluster | Count | Top Genres")
-        for info in cluster_infos:
-            print(f"{info['cluster']:7} | {info['count']:5} | {', '.join(info['top_genres'])}")
+    # 7. Print summary table (only if --genre not provided)
+    if args.genre is None:
+        try:
+            print_cluster_summary(cluster_infos)
+        except ImportError:
+            # Fallback if tabulate not installed
+            print("\nCluster Summary:")
+            print("Cluster | Count | Top Genres")
+            for info in cluster_infos:
+                print(f"{info['cluster']:7} | {info['count']:5} | {', '.join(info['top_genres'])}")
+    else:
+        print("Skipping cluster summary because --genre flag was provided.")
 
     # 8. Plot genre distribution (only if --genre not provided)
     if args.genre is None:
