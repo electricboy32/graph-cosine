@@ -2,20 +2,27 @@
 """
 Analyze Netflix Content Similarity and Genre Distribution
 
+Features:
 - Cluster Netflix movies/TV shows by description similarity
 - Summarize genres per cluster and overall
 - Plot top genres bar chart
+- Retrieve all movies/shows by a specific genre (sorted by rating)
 
 CLI options:
     --csv PATH         Path to input CSV (default: data.csv)
     --clusters N       Number of clusters for KMeans (default: 20)
     --top-genres M     Number of genres to plot (default: 20)
+    --genre GENRE      Filter and list all titles in the specified genre (case-insensitive)
     --no-show          Do not show plot (headless)
 
 Outputs:
     - netflix_clusters.csv: Data with cluster labels
     - Cluster summary printed to console
     - netflix_top_genres.png: Bar chart of top genres
+    - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
+
+Examples:
+    python analyze_netflix_similarity_and_genres.py --genre "Dramas"
 """
 
 import sys
@@ -106,12 +113,34 @@ def print_cluster_summary(cluster_infos):
     print("\nCluster Summary:")
     print(tabulate.tabulate(rows, headers=headers, tablefmt="github"))
 
+def filter_titles_by_genre(df_exploded, genre):
+    """Filter all titles in the specified genre (case-insensitive, whitespace-trim) and return deduped DataFrame"""
+    pd, *_ = import_or_die()
+    # Normalize genre for comparison
+    requested = genre.strip().lower()
+    # Find available genres (normalized for lookup)
+    genre_map = {g.strip().lower(): g for g in df_exploded['listed_in_exploded'].dropna().unique()}
+    if requested not in genre_map:
+        return None, sorted(genre_map.values())
+    # Filter rows
+    filtered = df_exploded[df_exploded['listed_in_exploded'].str.strip().str.lower() == requested]
+    # Deduplicate by title (keep first occurrence)
+    dedup_cols = ['title','type','rating','release_year','duration','description']
+    available_cols = [col for col in dedup_cols if col in filtered.columns]
+    if not available_cols:
+        available_cols = ['title','type','rating']
+        available_cols = [col for col in available_cols if col in filtered.columns]
+    filtered_out = filtered.drop_duplicates(subset=['title'])[available_cols].copy()
+    return filtered_out, None
+
 def main():
     pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
-    parser = argparse.ArgumentParser(description="Analyze Netflix similarity and genres")
+    parser = argparse.ArgumentParser(
+        description="Analyze Netflix similarity, genres, and list titles by genre")
     parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
     parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
     parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot [default: 20]")
+    parser.add_argument("--genre", type=str, default=None, help="Specify a genre to list all titles in that genre (case-insensitive)")
     parser.add_argument("--no-show", action="store_true", help="Suppress plot display")
     args = parser.parse_args()
 
@@ -126,6 +155,36 @@ def main():
     # 2. Preprocess genres & descriptions
     df['listed_in_list'] = preprocess_listed_in(df['listed_in'])
     df_exploded = df.explode('listed_in_list').rename(columns={'listed_in_list': 'listed_in_exploded'})
+
+    # 2b. If --genre: filter and output
+    if args.genre:
+        print(f"\nFiltering titles for genre: '{args.genre}'")
+        filtered, genre_list = filter_titles_by_genre(df_exploded, args.genre)
+        if filtered is None or filtered.empty:
+            print(f"Genre '{args.genre}' not found. Available genres:")
+            print(", ".join(genre_list))
+            sys.exit(1)
+        # Try to sort by 'rating' column if present
+        if 'rating' in filtered.columns:
+            try:
+                filtered['rating_numeric'] = pd.to_numeric(filtered['rating'], errors='coerce')
+                if filtered['rating_numeric'].notna().any():
+                    # Sort numeric descending, NaN last
+                    filtered = filtered.sort_values(by=['rating_numeric','rating'], ascending=[False, True])
+                else:
+                    filtered = filtered.sort_values(by=['rating'], ascending=True)
+                filtered = filtered.drop(columns=['rating_numeric'])
+            except Exception:  # fallback
+                filtered = filtered.sort_values(by=['rating'], ascending=True)
+        # Print results with row numbers
+        print(f"\nFound {len(filtered)} titles in genre '{args.genre}':")
+        print(filtered.reset_index(drop=True).to_string(index=True))
+        # Save to CSV
+        genre_fname = args.genre.strip().replace(" ", "_").lower()
+        out_path = f"titles_in_{genre_fname}.csv"
+        filtered.to_csv(out_path, index=False)
+        print(f"\nResults saved to {out_path}")
+        # Continue with rest of analysis as usual
 
     # 3. TF-IDF vectorization
     X, tfidf_vec = vectorize_descriptions(df['description'].fillna(''))
