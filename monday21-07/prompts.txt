@@ -1,6 +1,0 @@
-I have a file data.csv containing show_id,type,title,director,cast,country,date_added,release_year,rating,duration,listed_in,description.
-Create a python file to load this data for graphic display. The end goal should be to visualise whether netflix releases more tv series than movies.
-
-Change the graph so it now displays year by year movies vs tv show releases so we can see if over time, more tv series are released
-
-What is plot_type_distribution? Is it part of a library I don't have installed or have you not defined it properly? There is no def anywhere in the code
