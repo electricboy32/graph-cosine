@@ -256,3 +256,184 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def launch_pyqt_ui(df_exploded, clusters_df, available_genres, chart_path, initial_genre=None):
+    """
+    Launches a PyQt6 interactive UI for browsing Netflix titles and genres.
+    - df_exploded: DataFrame of exploded genres
+    - clusters_df: DataFrame with cluster assignment
+    - available_genres: list of genre strings
+    - chart_path: path to genre bar chart PNG (optional)
+    - initial_genre: genre string for initial selection (optional)
+    """
+    try:
+        from PyQt6.QtWidgets import (
+            QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+            QListWidget, QTextEdit, QFileDialog, QMessageBox, QComboBox, QSpacerItem, QSizePolicy
+        )
+        from PyQt6.QtGui import QPixmap, QFont
+        from PyQt6.QtCore import Qt
+    except ImportError:
+        print("PyQt6 not available. Please install it with pip install PyQt6 to use this UI.")
+        return
+
+    import sys
+
+    class MainWindow(QMainWindow):
+        def __init__(self, df_exploded, clusters_df, available_genres, chart_path, initial_genre):
+            super().__init__()
+            self.df_exploded = df_exploded
+            self.clusters_df = clusters_df
+            self.available_genres = available_genres
+            self.chart_path = chart_path
+            self.setWindowTitle("Netflix Explorer")
+            self.setMinimumSize(800, 600)
+
+            self.genre = initial_genre or (available_genres[0] if available_genres else "")
+            self.titles = []
+            self.idx = 0
+
+            # Widgets
+            self.genre_combo = QComboBox()
+            self.genre_combo.addItems(self.available_genres)
+            if self.genre:
+                self.genre_combo.setCurrentText(self.genre)
+            self.genre_combo.currentTextChanged.connect(self.change_genre)
+
+            self.lbl_title = QLabel("")
+            self.lbl_title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+            self.lbl_title.setWordWrap(True)
+            self.lbl_rating = QLabel("")
+            self.lbl_year = QLabel("")
+            self.lbl_duration = QLabel("")
+            self.lbl_idx = QLabel("")
+
+            self.txt_desc = QTextEdit("")
+            self.txt_desc.setReadOnly(True)
+            self.txt_desc.setMinimumHeight(100)
+            self.txt_desc.setFont(QFont("Arial", 11))
+            self.txt_desc.setWordWrapMode(True)
+
+            self.btn_prev = QPushButton("Prev")
+            self.btn_next = QPushButton("Next")
+            self.btn_prev.clicked.connect(self.prev_title)
+            self.btn_next.clicked.connect(self.next_title)
+
+            self.btn_save = QPushButton("Save List...")
+            self.btn_save.clicked.connect(self.save_file)
+            self.btn_chart = QPushButton("Show Genre Chart")
+            self.btn_chart.clicked.connect(self.show_chart)
+
+            # Layout
+            lay_main = QVBoxLayout()
+            lay_main.addWidget(QLabel("Select Genre:"))
+            lay_main.addWidget(self.genre_combo)
+            lay_main.addSpacing(8)
+            lay_main.addWidget(self.lbl_title)
+            info_row = QHBoxLayout()
+            info_row.addWidget(self.lbl_rating)
+            info_row.addWidget(self.lbl_year)
+            info_row.addWidget(self.lbl_duration)
+            info_row.addStretch()
+            lay_main.addLayout(info_row)
+            lay_main.addWidget(self.txt_desc)
+            nav_row = QHBoxLayout()
+            nav_row.addWidget(self.btn_prev)
+            nav_row.addWidget(self.btn_next)
+            nav_row.addWidget(self.lbl_idx)
+            nav_row.addStretch()
+            nav_row.addWidget(self.btn_save)
+            nav_row.addWidget(self.btn_chart)
+            lay_main.addLayout(nav_row)
+
+            central = QWidget()
+            central.setLayout(lay_main)
+            self.setCentralWidget(central)
+
+            self.change_genre(self.genre)
+            self.update_display()
+
+        def get_field(self, rec, key):
+            val = rec.get(key, "")
+            return "" if val is None else str(val)
+
+        def change_genre(self, genre):
+            genre = genre.strip()
+            self.genre = genre
+            df = self.df_exploded[self.df_exploded['listed_in_exploded'] == genre]
+            self.titles = df.drop_duplicates(subset=['title']).to_dict('records')
+            self.idx = 0
+            self.update_display()
+
+        def update_display(self):
+            if not self.titles:
+                self.lbl_title.setText("No titles found.")
+                self.lbl_rating.setText("")
+                self.lbl_year.setText("")
+                self.lbl_duration.setText("")
+                self.txt_desc.setText("")
+                self.lbl_idx.setText("")
+                return
+            rec = self.titles[self.idx]
+            self.lbl_title.setText(self.get_field(rec, 'title'))
+            self.lbl_rating.setText(f"Rating: {self.get_field(rec, 'rating')}")
+            self.lbl_year.setText(f"Year: {self.get_field(rec, 'release_year')}")
+            self.lbl_duration.setText(f"Duration: {self.get_field(rec, 'duration')}")
+            self.txt_desc.setText(self.get_field(rec, 'description'))
+            self.lbl_idx.setText(f"{self.idx + 1} / {len(self.titles)}")
+
+        def prev_title(self):
+            if self.idx > 0:
+                self.idx -= 1
+                self.update_display()
+
+        def next_title(self):
+            if self.idx < len(self.titles) - 1:
+                self.idx += 1
+                self.update_display()
+
+        def keyPressEvent(self, event):
+            if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_A):
+                self.prev_title()
+            elif event.key() in (Qt.Key.Key_Right, Qt.Key.Key_D):
+                self.next_title()
+            else:
+                super().keyPressEvent(event)
+
+        def save_file(self):
+            if not self.titles:
+                QMessageBox.information(self, "No Data", "No titles to save.")
+                return
+            path, _ = QFileDialog.getSaveFileName(self, "Save Titles", f"{self.genre}_titles.csv", "CSV Files (*.csv);;All Files (*)")
+            if path:
+                import pandas as pd
+                pd.DataFrame(self.titles).to_csv(path, index=False)
+                QMessageBox.information(self, "Saved", f"Saved {len(self.titles)} titles to {path}")
+
+        def show_chart(self):
+            if not self.chart_path:
+                QMessageBox.warning(self, "No Chart", "No chart image available.")
+                return
+            chart_win = QWidget()
+            chart_win.setWindowTitle("Top Genres Chart")
+            vbox = QVBoxLayout()
+            pixmap = QPixmap(self.chart_path)
+            if pixmap.isNull():
+                lbl = QLabel("Could not load chart image.")
+            else:
+                lbl = QLabel()
+                lbl.setPixmap(pixmap.scaledToWidth(700, Qt.TransformationMode.SmoothTransformation))
+            vbox.addWidget(lbl)
+            chart_win.setLayout(vbox)
+            chart_win.setMinimumWidth(720)
+            chart_win.show()
+            # Keep open until closed
+            chart_win.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self.chart_win = chart_win # ref
+
+    # ---- App launch ----
+    app = QApplication(sys.argv)
+    mw = MainWindow(df_exploded, clusters_df, available_genres, chart_path, initial_genre)
+    mw.show()
+    app.exec()
