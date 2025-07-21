@@ -18,7 +18,7 @@ CLI options:
     --no-show          Do not show plot (headless)
 
 Outputs:
-    - netflix_clusters.csv: Data with cluster labels
+    - netflix_clusters.csv: Data with cluster labels (not produced if --genre is set)
     - Cluster summary printed to console
     - netflix_top_genres.png: Bar chart of top genres (not produced if --genre is set)
     - titles_in_<genre>.csv: (only if --genre is specified) CSV of titles in that genre
@@ -224,9 +224,13 @@ def main():
             "top_genres": top_genres,
         })
 
-    # 6. Save CSV
+    # 6. Save CSV (only if --genre not provided)
     df_out = df[['title', 'type', 'description', 'listed_in', 'cluster']]
-    df_out.to_csv("netflix_clusters.csv", index=False)
+    if args.genre is None:
+        df_out.to_csv("netflix_clusters.csv", index=False)
+        print("Saved clustering results to netflix_clusters.csv")
+    else:
+        print("Skipping clusters CSV because --genre flag was provided.")
 
     # 7. Print summary table
     try:
