@@ -172,8 +172,9 @@ def main():
 
     # 2a. Write available genres file
     unique_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
-    write_available_genres(unique_genres, "available_genres.txt")
-    print(f"Wrote {len(unique_genres)} available genres to available_genres.txt")
+    available_genres = unique_genres
+    write_available_genres(available_genres, "available_genres.txt")
+    print(f"Wrote {len(available_genres)} available genres to available_genres.txt")
 
     # 2b. If --genre: filter and output
     filtered = None
