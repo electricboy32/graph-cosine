@@ -26,6 +26,7 @@ Examples:
 import sys
 import argparse
 import os
+import tempfile
 
 def import_or_die():
     try:
@@ -216,6 +217,10 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
             nav_row.addWidget(self.lbl_idx)
             nav_row.addStretch()
             nav_row.addWidget(self.btn_save)
+            # Add Back button to nav_row
+            self.btn_back = QPushButton("Back")
+            self.btn_back.clicked.connect(self.close)
+            nav_row.addWidget(self.btn_back)
             lay_main.addLayout(nav_row)
 
             self.setLayout(lay_main)
@@ -337,6 +342,10 @@ def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path
             else:
                 lbl.setText("Could not load chart image.")
             vbox.addWidget(lbl)
+            # Add Back/Close button
+            btn_back = QPushButton("Back")
+            btn_back.clicked.connect(dlg.accept)
+            vbox.addWidget(btn_back)
             dlg.setLayout(vbox)
             dlg.setMinimumWidth(650)
             dlg.setModal(True)
@@ -420,8 +429,10 @@ def main():
         })
     clusters_df = df[['title', 'type', 'description', 'listed_in', 'cluster']]
 
-    # 6. Always generate chart PNG (no popup)
-    chart_path = "netflix_top_genres.png"
+    # 6. Always generate chart PNG (no popup) into temp file
+    chart_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    chart_path = chart_file.name
+    chart_file.close()
     plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=False)
 
     # 7. Launch Dashboard UI unless --no-ui
