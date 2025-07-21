@@ -206,7 +206,7 @@ def main():
     df = load_data(args.csv)
 
     # Plot and save chart
-    plot_type_distribution(
+    plot_yearly_type_trend(
         df,
         show=not args.no_show,
         save_path="netflix_type_distribution.png"
