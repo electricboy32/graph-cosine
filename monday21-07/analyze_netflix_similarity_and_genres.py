@@ -1,34 +1,26 @@
 #!/usr/bin/env python3
 """
-Analyze Netflix Content Similarity and Genre Distribution
+Netflix Content Similarity and Genre Dashboard
 
 Features:
-- Cluster Netflix movies/TV shows by description similarity
+- Cluster Netflix movies/TV shows by description similarity (MiniBatchKMeans)
 - Summarize genres per cluster and overall
-- Plot top genres bar chart (always generated for UI, only shown in Matplotlib if --no-show is not set)
-- Retrieve all movies/shows by a specific genre (sorted by rating)
-- Modern PyQt6-based interactive UI: genre picker, title viewer, navigation, action buttons (unless --no-ui)
-- Writes all available genres (for --genre option) to available_genres.txt
+- Bar chart of top genres (saved as PNG; no Matplotlib UI pop-up)
+- Modern PyQt6 Dashboard: buttons to show chart, export data, browse genres, exit
+    * Chart dialog: view saved chart image
+    * Export Data: lets user pick directory to save available_genres.txt and netflix_clusters.csv
+    * Browse Genre: select genre, navigate titles, export titles_<genre>.csv
+- All outputs are user-triggered; nothing auto-saved to CWD
 
 CLI options:
     --csv PATH         Path to input CSV (default: data.csv)
     --clusters N       Number of clusters for KMeans (default: 20)
     --top-genres M     Number of genres to plot (default: 20)
-    --genre GENRE      Filter and list all titles in the specified genre (case-insensitive).
-                       If set, skips cluster summary/table/auto-CSV, but enables GUI.
-    --no-ui            Suppress PyQt6 GUI; just print results.
-    --no-show          Suppress Matplotlib pop-up windows (does not affect GUI)
-
-Outputs:
-    - netflix_clusters.csv: Data with cluster labels (auto if no --genre or no UI; else only by UI button)
-    - Cluster summary printed to console (not shown if --genre is set)
-    - netflix_top_genres.png: Bar chart of top genres (always generated for UI)
-    - titles_in_<genre>.csv: (only if --genre is specified and saved via UI or auto if --no-ui)
-    - available_genres.txt: All unique valid genres, one per line (auto-generated)
+    --no-ui            Suppress PyQt6 GUI; just run analysis and exit
 
 Examples:
-    python analyze_netflix_similarity_and_genres.py --genre "Dramas"
-    python analyze_netflix_similarity_and_genres.py --genre "Comedies" --no-ui
+    python analyze_netflix_similarity_and_genres.py
+    python analyze_netflix_similarity_and_genres.py --no-ui
 """
 
 import sys
@@ -148,14 +140,12 @@ def write_available_genres(genres, path="available_genres.txt"):
 def main():
     pd, np, plt, sns, TfidfVectorizer, MiniBatchKMeans, pairwise_distances = import_or_die()
     parser = argparse.ArgumentParser(
-        description="Analyze Netflix similarity, genres, and list titles by genre. Writes available genres to available_genres.txt automatically. If --genre is set, opens interactive UI browser for titles unless --no-ui or --no-show."
+        description="Netflix clustering and genre dashboard. See --help for options."
     )
     parser.add_argument("--csv", type=str, default="data.csv", help="Path to CSV file [default: data.csv]")
     parser.add_argument("--clusters", type=int, default=20, help="Number of clusters for KMeans [default: 20]")
     parser.add_argument("--top-genres", type=int, default=20, help="Number of top genres to plot [default: 20]")
-    parser.add_argument("--genre", type=str, default=None, help="Specify a genre to list all titles in that genre (case-insensitive). Shows interactive UI unless --no-ui.")
-    parser.add_argument("--no-ui", action="store_true", help="Suppress interactive UI for --genre (just print table)")
-    parser.add_argument("--no-show", action="store_true", help="Suppress plot display and UI (headless)")
+    parser.add_argument("--no-ui", action="store_true", help="Suppress PyQt6 dashboard UI; just run analysis and exit")
     args = parser.parse_args()
 
     # 1. Load CSV
@@ -170,45 +160,11 @@ def main():
     df['listed_in_list'] = preprocess_listed_in(df['listed_in'])
     df_exploded = df.explode('listed_in_list').rename(columns={'listed_in_list': 'listed_in_exploded'})
 
-    # 2a. Write available genres file
-    unique_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
-    available_genres = unique_genres
-    write_available_genres(available_genres, "available_genres.txt")
-    print(f"Wrote {len(available_genres)} available genres to available_genres.txt")
+    # 3. Available genres (not auto-saved)
+    available_genres = sorted({g for g in df_exploded['listed_in_exploded'].dropna().unique() if g})
 
-    # 2b. If --genre: filter and output
-    filtered = None
-    if args.genre:
-        print(f"\nFiltering titles for genre: '{args.genre}'")
-        filtered, genre_list = filter_titles_by_genre(df_exploded, args.genre)
-        if filtered is None or filtered.empty:
-            print(f"Genre '{args.genre}' not found. Available genres:")
-            print(", ".join(genre_list))
-            sys.exit(1)
-        # Try to sort by 'rating' column if present
-        if 'rating' in filtered.columns:
-            try:
-                filtered['rating_numeric'] = pd.to_numeric(filtered['rating'], errors='coerce')
-                if filtered['rating_numeric'].notna().any():
-                    filtered = filtered.sort_values(by=['rating_numeric','rating'], ascending=[False, True])
-                else:
-                    filtered = filtered.sort_values(by=['rating'], ascending=True)
-                filtered = filtered.drop(columns=['rating_numeric'])
-            except Exception:
-                filtered = filtered.sort_values(by=['rating'], ascending=True)
-        print(f"\nFound {len(filtered)} titles in genre '{args.genre}':")
-        print(filtered.reset_index(drop=True).to_string(index=True))
-        # Optionally save CSV if no UI
-        if args.no_ui:
-            genre_fname = args.genre.strip().replace(" ", "_").lower()
-            out_path = f"titles_in_{genre_fname}.csv"
-            filtered.to_csv(out_path, index=False)
-            print(f"\nResults saved to {out_path}")
-
-    # 3. TF-IDF vectorization
+    # 4. TF-IDF vectorization & clustering
     X, tfidf_vec = vectorize_descriptions(df['description'].fillna(''))
-
-    # 4. Clustering
     km, labels = perform_clustering(X, args.clusters)
     df['cluster'] = labels
 
@@ -227,36 +183,245 @@ def main():
         })
     clusters_df = df[['title', 'type', 'description', 'listed_in', 'cluster']]
 
-    # 6. Save CSV (only if --genre not provided and no UI)
-    if args.genre is None and args.no_ui:
-        clusters_df.to_csv("netflix_clusters.csv", index=False)
-        print("Saved clustering results to netflix_clusters.csv")
-    elif args.genre is not None and args.no_ui:
-        print("Skipping clusters CSV because --genre flag was provided.")
-    # If UI is to be launched, user saves CSV from UI
-
-    # 7. Print summary table (only if --genre not provided)
-    if args.genre is None:
-        try:
-            print_cluster_summary(cluster_infos)
-        except ImportError:
-            print("\nCluster Summary:")
-            print("Cluster | Count | Top Genres")
-            for info in cluster_infos:
-                print(f"{info['cluster']:7} | {info['count']:5} | {', '.join(info['top_genres'])}")
-    else:
-        print("Skipping cluster summary because --genre flag was provided.")
-
-    # 8. Plot genre distribution (always generate image for UI, only show if --no-show is not set and --genre is None)
+    # 6. Always generate chart PNG (no popup)
     chart_path = "netflix_top_genres.png"
-    plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=(args.genre is None and not args.no_show))
+    plot_top_genres(df_exploded, args.top_genres, chart_path, show_plot=False)
 
-    # 9. If UI is desired, launch PyQt6 UI
-    if args.genre and not args.no_ui:
-        launch_pyqt_ui(df_exploded, clusters_df, available_genres, chart_path, initial_genre=args.genre)
+    # 7. Launch Dashboard UI unless --no-ui
+    if not args.no_ui:
+        launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path)
+    else:
+        print("Analysis complete. Dashboard UI not shown (--no-ui).")
+
 
 if __name__ == "__main__":
     main()
+
+
+def launch_pyqt_dashboard(df_exploded, clusters_df, available_genres, chart_path):
+    """
+    PyQt6 Dashboard for Netflix clustering/genre analysis.
+    - Buttons: Show Genre Chart, Export Data, Browse Genre, Exit
+    - Export Data: lets user pick directory and saves available_genres.txt, netflix_clusters.csv
+    - Browse Genre: opens browser with genre combo, Prev/Next, Save Titles CSV
+    """
+    try:
+        from PyQt6.QtWidgets import (
+            QApplication, QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+            QFileDialog, QMessageBox, QComboBox, QTextEdit, QSpacerItem, QSizePolicy
+        )
+        from PyQt6.QtGui import QPixmap, QFont
+        from PyQt6.QtCore import Qt
+    except ImportError:
+        print("PyQt6 not available. Please install it with pip install PyQt6 to use this UI.")
+        return
+
+    import sys
+    import os
+
+    class GenreBrowserWindow(QWidget):
+        def __init__(self, df_exploded, available_genres):
+            super().__init__()
+            self.df_exploded = df_exploded
+            self.available_genres = available_genres
+            self.setWindowTitle("Browse Netflix by Genre")
+            self.setMinimumSize(700, 500)
+
+            self.genre_combo = QComboBox()
+            self.genre_combo.addItems(self.available_genres)
+            self.genre_combo.currentTextChanged.connect(self.change_genre)
+
+            self.lbl_title = QLabel("")
+            self.lbl_title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+            self.lbl_title.setWordWrap(True)
+            self.lbl_rating = QLabel("")
+            self.lbl_year = QLabel("")
+            self.lbl_duration = QLabel("")
+            self.lbl_idx = QLabel("")
+
+            self.txt_desc = QTextEdit("")
+            self.txt_desc.setReadOnly(True)
+            self.txt_desc.setMinimumHeight(100)
+            self.txt_desc.setFont(QFont("Arial", 11))
+            self.txt_desc.setWordWrapMode(True)
+
+            self.btn_prev = QPushButton("Prev")
+            self.btn_next = QPushButton("Next")
+            self.btn_prev.clicked.connect(self.prev_title)
+            self.btn_next.clicked.connect(self.next_title)
+            self.btn_save = QPushButton("Save Titles CSV")
+            self.btn_save.clicked.connect(self.save_titles_csv)
+
+            lay_main = QVBoxLayout()
+            lay_main.addWidget(QLabel("Select Genre:"))
+            lay_main.addWidget(self.genre_combo)
+            lay_main.addSpacing(8)
+            lay_main.addWidget(self.lbl_title)
+            info_row = QHBoxLayout()
+            info_row.addWidget(self.lbl_rating)
+            info_row.addWidget(self.lbl_year)
+            info_row.addWidget(self.lbl_duration)
+            info_row.addStretch()
+            lay_main.addLayout(info_row)
+            lay_main.addWidget(self.txt_desc)
+            nav_row = QHBoxLayout()
+            nav_row.addWidget(self.btn_prev)
+            nav_row.addWidget(self.btn_next)
+            nav_row.addWidget(self.lbl_idx)
+            nav_row.addStretch()
+            nav_row.addWidget(self.btn_save)
+            lay_main.addLayout(nav_row)
+
+            self.setLayout(lay_main)
+
+            self.filtered = []
+            self.idx = 0
+            self.change_genre(self.genre_combo.currentText())
+            self.update_display()
+
+        def get_field(self, rec, key):
+            val = rec.get(key, "")
+            return "" if val is None else str(val)
+
+        def change_genre(self, genre):
+            genre = genre.strip()
+            df = self.df_exploded[self.df_exploded['listed_in_exploded'] == genre]
+            self.filtered = df.drop_duplicates(subset=['title']).to_dict('records')
+            self.idx = 0
+            self.update_display()
+
+        def update_display(self):
+            if not self.filtered:
+                self.lbl_title.setText("No titles found.")
+                self.lbl_rating.setText("")
+                self.lbl_year.setText("")
+                self.lbl_duration.setText("")
+                self.txt_desc.setText("")
+                self.lbl_idx.setText("")
+                return
+            rec = self.filtered[self.idx]
+            self.lbl_title.setText(self.get_field(rec, 'title'))
+            self.lbl_rating.setText(f"Rating: {self.get_field(rec, 'rating')}")
+            self.lbl_year.setText(f"Year: {self.get_field(rec, 'release_year')}")
+            self.lbl_duration.setText(f"Duration: {self.get_field(rec, 'duration')}")
+            self.txt_desc.setText(self.get_field(rec, 'description'))
+            self.lbl_idx.setText(f"{self.idx + 1} / {len(self.filtered)}")
+
+        def prev_title(self):
+            if self.idx > 0:
+                self.idx -= 1
+                self.update_display()
+
+        def next_title(self):
+            if self.idx < len(self.filtered) - 1:
+                self.idx += 1
+                self.update_display()
+
+        def keyPressEvent(self, event):
+            if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_A):
+                self.prev_title()
+            elif event.key() in (Qt.Key.Key_Right, Qt.Key.Key_D):
+                self.next_title()
+            else:
+                super().keyPressEvent(event)
+
+        def save_titles_csv(self):
+            if not self.filtered:
+                QMessageBox.information(self, "No Data", "No titles to save.")
+                return
+            genre = self.genre_combo.currentText().replace(" ", "_").lower()
+            path, _ = QFileDialog.getSaveFileName(self, "Save Titles", f"titles_{genre}.csv", "CSV Files (*.csv);;All Files (*)")
+            if path:
+                import pandas as pd
+                pd.DataFrame(self.filtered).to_csv(path, index=False)
+                QMessageBox.information(self, "Saved", f"Saved {len(self.filtered)} titles to {path}")
+
+    class MainDashboardWindow(QMainWindow):
+        def __init__(self, df_exploded, clusters_df, available_genres, chart_path):
+            super().__init__()
+            self.df_exploded = df_exploded
+            self.clusters_df = clusters_df
+            self.available_genres = available_genres
+            self.chart_path = chart_path
+            self.setWindowTitle("Netflix Dashboard")
+            self.setMinimumSize(600, 400)
+
+            self.label = QLabel("Netflix Clustering & Genre Dashboard")
+            self.label.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+            self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self.btn_chart = QPushButton("Show Genre Chart")
+            self.btn_chart.clicked.connect(self.show_chart_dialog)
+            self.btn_export = QPushButton("Export Data")
+            self.btn_export.clicked.connect(self.export_data)
+            self.btn_browse = QPushButton("Browse Genre")
+            self.btn_browse.clicked.connect(self.launch_genre_browser)
+            self.btn_exit = QPushButton("Exit")
+            self.btn_exit.clicked.connect(self.close)
+
+            btns = QHBoxLayout()
+            btns.addWidget(self.btn_chart)
+            btns.addWidget(self.btn_export)
+            btns.addWidget(self.btn_browse)
+            btns.addWidget(self.btn_exit)
+
+            vbox = QVBoxLayout()
+            vbox.addSpacing(16)
+            vbox.addWidget(self.label)
+            vbox.addSpacing(40)
+            vbox.addLayout(btns)
+            vbox.addStretch()
+
+            central = QWidget()
+            central.setLayout(vbox)
+            self.setCentralWidget(central)
+
+        def show_chart_dialog(self):
+            if not os.path.exists(self.chart_path):
+                QMessageBox.warning(self, "Chart Not Found", "Chart image not found.")
+                return
+            dlg = QWidget(self)
+            dlg.setWindowTitle("Top Genres Chart")
+            vbox = QVBoxLayout()
+            lbl = QLabel()
+            pixmap = QPixmap(self.chart_path)
+            if not pixmap.isNull():
+                lbl.setPixmap(pixmap.scaledToWidth(600, Qt.TransformationMode.SmoothTransformation))
+            else:
+                lbl.setText("Could not load chart image.")
+            vbox.addWidget(lbl)
+            dlg.setLayout(vbox)
+            dlg.setMinimumWidth(650)
+            dlg.show()
+            dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self.chart_win = dlg
+
+        def export_data(self):
+            dirpath = QFileDialog.getExistingDirectory(self, "Select Directory to Save Data")
+            if dirpath:
+                try:
+                    # Save available_genres.txt
+                    genres_path = os.path.join(dirpath, "available_genres.txt")
+                    with open(genres_path, "w", encoding="utf-8") as f:
+                        for g in self.available_genres:
+                            f.write(f"{g}\n")
+                    # Save clusters CSV
+                    clusters_path = os.path.join(dirpath, "netflix_clusters.csv")
+                    self.clusters_df.to_csv(clusters_path, index=False)
+                    QMessageBox.information(self, "Exported", f"Exported:\n{genres_path}\n{clusters_path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Could not save files: {e}")
+
+        def launch_genre_browser(self):
+            win = GenreBrowserWindow(self.df_exploded, self.available_genres)
+            win.setWindowModality(Qt.WindowModality.ApplicationModal)
+            win.show()
+            self.genre_browser = win  # keep reference
+
+    app = QApplication(sys.argv)
+    mw = MainDashboardWindow(df_exploded, clusters_df, available_genres, chart_path)
+    mw.show()
+    app.exec()
 
 
 def launch_pyqt_ui(df_exploded, clusters_df, available_genres, chart_path, initial_genre=None):
